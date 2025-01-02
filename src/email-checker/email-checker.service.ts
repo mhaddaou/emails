@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as blacklist from '../lib/blacklist.json';
 import * as nodemailer from 'nodemailer';
 import * as net from 'net';
+import * as tls from 'tls';
 
 import {
   BrowserContext,
@@ -1073,6 +1074,159 @@ export class EmailCheckerService {
     }
   }
 
+  // async verifyEmail(
+  //   email: string,
+  //   dnsResult: DnsVerificationResult,
+  //   timeout = 10000,
+  // ): Promise<SmtpVerificationResult> {
+  //   if (!dnsResult.hasMxRecord || dnsResult.mxRecords.length === 0) {
+  //     return {
+  //       success: false,
+  //       exists: false,
+  //       message: 'No MX records found for domain',
+  //     };
+  //   }
+
+  //   const [username, domain] = email.split('@');
+  //   const mxRecord = dnsResult.mxRecords[0];
+
+  //   return new Promise((resolve) => {
+  //     const socket = new net.Socket();
+  //     let buffer = '';
+  //     let step = 0;
+
+  //     const timeoutId = setTimeout(() => {
+  //       socket.destroy();
+  //       resolve({
+  //         success: false,
+  //         exists: false,
+  //         message: 'Connection timeout',
+  //       });
+  //     }, timeout);
+
+  //     socket.connect(25, mxRecord.exchange, () => {
+  //       console.log('Connected to SMTP server');
+  //       // Connected successfully
+  //     });
+
+  //     socket.on('data', (data) => {
+  //       console.log('Raw server response:', data.toString());
+
+  //       buffer += data.toString();
+
+  //       if (buffer.includes('\r\n')) {
+  //         const response = buffer.trim();
+  //         buffer = '';
+
+  //         switch (step) {
+  //           case 0:
+  //             console.log('Step 0 - Initial Connection Response:', response);
+
+  //             if (response.startsWith('2')) {
+  //               socket.write(`HELO ${domain}\r\n`);
+  //               step++;
+  //             } else {
+  //               this.closeConnection(
+  //                 socket,
+  //                 timeoutId,
+  //                 false,
+  //                 'Server not ready',
+  //                 resolve,
+  //               );
+  //             }
+  //             break;
+
+  //           case 1:
+  //             console.log('Step 1 - HELO Response:', response);
+
+  //             if (response.startsWith('2')) {
+  //               socket.write(`MAIL FROM:<mhaddaou@${domain}>\r\n`);
+  //               step++;
+  //             } else {
+  //               this.closeConnection(
+  //                 socket,
+  //                 timeoutId,
+  //                 false,
+  //                 'HELO failed',
+  //                 resolve,
+  //               );
+  //             }
+  //             break;
+
+  //           case 2:
+  //             console.log('Step 2 - MAIL FROM Response:', response);
+
+  //             if (response.startsWith('2')) {
+  //               socket.write(`RCPT TO:<${email}>\r\n`);
+  //               step++;
+  //             } else {
+  //               this.closeConnection(
+  //                 socket,
+  //                 timeoutId,
+  //                 false,
+  //                 'MAIL FROM failed',
+  //                 resolve,
+  //               );
+  //             }
+  //             break;
+
+  //           case 3:
+  //             console.log('Step 3 - RCPT TO Response:', response);
+  //             if (response.startsWith('250')) {
+  //               // Email exists
+  //               this.closeConnection(
+  //                 socket,
+  //                 timeoutId,
+  //                 true,
+  //                 'Email exists',
+  //                 resolve,
+  //               );
+  //             } else if (
+  //               response.includes('blocked using Spamhaus') ||
+  //               response.includes('Service unavailable')
+  //             ) {
+  //               this.closeConnection(
+  //                 socket,
+  //                 timeoutId,
+  //                 false,
+  //                 'Verification failed: Server blocked our request (IP listed in Spamhaus)',
+  //                 resolve,
+  //               );
+  //             } else if (response.startsWith('550')) {
+  //               // Email doesn't exist
+  //               this.closeConnection(
+  //                 socket,
+  //                 timeoutId,
+  //                 false,
+  //                 'Email does not exist',
+  //                 resolve,
+  //               );
+  //             } else {
+  //               this.closeConnection(
+  //                 socket,
+  //                 timeoutId,
+  //                 false,
+  //                 'Unexpected response',
+  //                 resolve,
+  //               );
+  //             }
+  //             break;
+  //         }
+  //       }
+  //     });
+
+  //     socket.on('error', (err) => {
+  //       console.log('SMTP Error:', err.message);
+  //       this.closeConnection(
+  //         socket,
+  //         timeoutId,
+  //         false,
+  //         `Connection error: ${err.message}`,
+  //         resolve,
+  //       );
+  //     });
+  //   });
+  // }
   async verifyEmail(
     email: string,
     dnsResult: DnsVerificationResult,
@@ -1087,10 +1241,15 @@ export class EmailCheckerService {
     }
 
     const [username, domain] = email.split('@');
-    const mxRecord = dnsResult.mxRecords[0];
 
     return new Promise((resolve) => {
-      const socket = new net.Socket();
+      // Using TLS socket instead of regular socket
+      const socket = tls.connect({
+        host: 'smtp.office365.com',  // Using Outlook's SMTP server
+        port: 587,                   // Using submission port
+        timeout: timeout
+      });
+      
       let buffer = '';
       let step = 0;
 
@@ -1103,14 +1262,17 @@ export class EmailCheckerService {
         });
       }, timeout);
 
-      socket.connect(25, mxRecord.exchange, () => {
-        console.log('Connected to SMTP server');
-        // Connected successfully
+      // Monitor connection status
+      socket.on('connect', () => {
+        console.log('Connection established');
+      });
+
+      socket.on('timeout', () => {
+        console.log('Connection timed out');
       });
 
       socket.on('data', (data) => {
         console.log('Raw server response:', data.toString());
-
         buffer += data.toString();
 
         if (buffer.includes('\r\n')) {
@@ -1120,94 +1282,61 @@ export class EmailCheckerService {
           switch (step) {
             case 0:
               console.log('Step 0 - Initial Connection Response:', response);
-
               if (response.startsWith('2')) {
-                socket.write(`HELO ${domain}\r\n`);
+                socket.write(`EHLO ${domain}\r\n`);  // Using EHLO instead of HELO for extended SMTP
                 step++;
               } else {
-                this.closeConnection(
-                  socket,
-                  timeoutId,
-                  false,
-                  'Server not ready',
-                  resolve,
-                );
+                this.closeConnection(socket, timeoutId, false, 'Server not ready', resolve);
               }
               break;
 
             case 1:
-              console.log('Step 1 - HELO Response:', response);
-
+              console.log('Step 1 - EHLO Response:', response);
               if (response.startsWith('2')) {
-                socket.write(`MAIL FROM:<mhaddaou@${domain}>\r\n`);
+                // Start TLS negotiation
+                socket.write('STARTTLS\r\n');
                 step++;
               } else {
-                this.closeConnection(
-                  socket,
-                  timeoutId,
-                  false,
-                  'HELO failed',
-                  resolve,
-                );
+                this.closeConnection(socket, timeoutId, false, 'EHLO failed', resolve);
               }
               break;
 
             case 2:
-              console.log('Step 2 - MAIL FROM Response:', response);
-
+              console.log('Step 2 - STARTTLS Response:', response);
               if (response.startsWith('2')) {
-                socket.write(`RCPT TO:<${email}>\r\n`);
+                socket.write(`MAIL FROM:<verify@${domain}>\r\n`);
                 step++;
               } else {
-                this.closeConnection(
-                  socket,
-                  timeoutId,
-                  false,
-                  'MAIL FROM failed',
-                  resolve,
-                );
+                this.closeConnection(socket, timeoutId, false, 'STARTTLS failed', resolve);
               }
               break;
 
             case 3:
-              console.log('Step 3 - RCPT TO Response:', response);
+              console.log('Step 3 - MAIL FROM Response:', response);
+              if (response.startsWith('2')) {
+                socket.write(`RCPT TO:<${email}>\r\n`);
+                step++;
+              } else {
+                this.closeConnection(socket, timeoutId, false, 'MAIL FROM failed', resolve);
+              }
+              break;
+
+            case 4:
+              console.log('Step 4 - RCPT TO Response:', response);
               if (response.startsWith('250')) {
-                // Email exists
-                this.closeConnection(
-                  socket,
-                  timeoutId,
-                  true,
-                  'Email exists',
-                  resolve,
-                );
-              } else if (
-                response.includes('blocked using Spamhaus') ||
-                response.includes('Service unavailable')
-              ) {
+                this.closeConnection(socket, timeoutId, true, 'Email exists', resolve);
+              } else if (response.includes('blocked') || response.includes('Service unavailable')) {
                 this.closeConnection(
                   socket,
                   timeoutId,
                   false,
-                  'Verification failed: Server blocked our request (IP listed in Spamhaus)',
+                  'Verification failed: Server blocked our request',
                   resolve,
                 );
               } else if (response.startsWith('550')) {
-                // Email doesn't exist
-                this.closeConnection(
-                  socket,
-                  timeoutId,
-                  false,
-                  'Email does not exist',
-                  resolve,
-                );
+                this.closeConnection(socket, timeoutId, false, 'Email does not exist', resolve);
               } else {
-                this.closeConnection(
-                  socket,
-                  timeoutId,
-                  false,
-                  'Unexpected response',
-                  resolve,
-                );
+                this.closeConnection(socket, timeoutId, false, 'Unexpected response', resolve);
               }
               break;
           }
@@ -1226,9 +1355,8 @@ export class EmailCheckerService {
       });
     });
   }
-
   private closeConnection(
-    socket: net.Socket,
+    socket: any,
     timeoutId: NodeJS.Timeout,
     exists: boolean,
     message: string,
@@ -1243,4 +1371,21 @@ export class EmailCheckerService {
       message,
     });
   }
+
+  // private closeConnection(
+  //   socket: net.Socket,
+  //   timeoutId: NodeJS.Timeout,
+  //   exists: boolean,
+  //   message: string,
+  //   resolve: (value: SmtpVerificationResult) => void,
+  // ): void {
+  //   clearTimeout(timeoutId);
+  //   socket.write('QUIT\r\n');
+  //   socket.destroy();
+  //   resolve({
+  //     success: true,
+  //     exists,
+  //     message,
+  //   });
+  // }
 }
